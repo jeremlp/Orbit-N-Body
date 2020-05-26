@@ -19,7 +19,8 @@ import sys
 import time
 import numpy as np
 import math
-
+import random
+from numba import jit, cuda
 
     
 class Ui_MainWindow(QtWidgets.QMainWindow):
@@ -31,15 +32,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.setGeometry(50,50,1850,950)
         self.centralwidget = QtWidgets.QWidget(self)
         self.setCentralWidget(self.centralwidget)
-        
-        # self.horizontalSlider_1 = QtWidgets.QSlider(Qt.Horizontal,self)
-        # self.horizontalSlider_1.setGeometry(QtCore.QRect(100, 850, 160, 22))
-        # self.horizontalSlider_1.setOrientation(QtCore.Qt.Horizontal)
-        # self.horizontalSlider_1.setMaximum(100)
-        # self.horizontalSlider_1.setMinimum(1)
-        # self.horizontalSlider_1.valueChanged.connect(self.Draw)
-        # self.label = QtGui.QLabel(str(self.horizontalSlider_1.value()),self)
-        # self.label.move(120,825)
+
         class obj:
             def __init__(self,mass,r,vx,vy,x,y):
                 self.mass = mass
@@ -47,13 +40,14 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
                 self.vx,self.vy = vx,vy
                 self.x,self.y = x,y
                 self.POS = []
+                self.col = False
                 
         self.width,self.high = 1800,925 #1400,800
         self.graphicsView = QtWidgets.QGraphicsView(self.centralwidget)
         self.graphicsView.setGeometry(QtCore.QRect(10,10,self.width,self.high))
         self.scene = QtWidgets.QGraphicsScene()
         self.graphicsView.setScene(self.scene)
-        self.graphicsView.setRenderHint(QtGui.QPainter.Antialiasing)
+        # self.graphicsView.setRenderHint(QtGui.QPainter.Antialiasing)
         # self.graphicsView.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         font = QtGui.QFont('SansSerif', 12)
         font.setBold(True)
@@ -63,91 +57,129 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.DEMO = 'solar'
 
         if self.DEMO == 'solar':
-            self.OBJ = [obj(10999*10**10, 25, 0,0,1000,450),obj(10*10**10,8,3.5,0,1000,775),
-                    obj(0.011*10**10, 3,3,0.1,1000,790)]
+            self.OBJ = [obj(10999*10**10, 25, 0,0,1000,450),obj(10*10**10,8,3.5,0,1000,775)]
+        if self.DEMO == 'real':
+            self.OBJ = [obj(2/3*10**30, 25, 0,0,1000,450),obj(2*10**24,8,3.5,0,1000,775),
+                    obj(7/3*10**22/2, 3,3,0.1,1000,790)]
         if self.DEMO == '10_stars':
-            self.OBJ = [obj(1000*10**10, 25, 0,0,1000,450)]
-            for i in range(50,1800,100):
-                for j in range(50,850,100):
-                    self.OBJ.append(obj(0.01*10**10,5,0,0,i,j))
-            
+            self.OBJ = []
+            nb_etoies = 80
+            for i in range(350,1500,nb_etoies):
+                for j in range(50,850,nb_etoies):
+                    score = (i-800)**2 + (j-450)**2
+                    if score <= 100000:
+                        alpha  = math.atan2(i-800,j-450)
+                        vx = np.sin(alpha- np.pi*0.5)*np.sqrt(score)/100
+                        vy = np.cos(alpha- np.pi*0.5)*np.sqrt(score)/100
+                        self.OBJ.append(obj(np.random.uniform(4*11**12,6*11**13),2,vx,vy,i,j))
+            print(len(self.OBJ))
             
         self.G = 6.674*10**-11
-        self.dt = 15
-        self.cond = False
-        self.timer3 = pg.QtCore.QTimer()
-        self.timer3.timeout.connect(self.Draw)
-        self.timer3.start(self.dt) # refresh rate in ms
-        
+        self.T,self.n = 200,5
+        self.color = False
+        self.h = self.T/self.n
         self.show()
+        self.Simulation()
+       
    
 
     def getDistance(self,obj_main,obj_sec):
             return np.sqrt((obj_sec.x-obj_main.x)**2+(obj_sec.y-obj_main.y)**2)
-
+    # @jit(target ="cuda")
     def getPos(self,obj_main):
         # start_time = time.time()
-            
-        self.OBJ_2 = self.OBJ
-        index = self.OBJ_2.index(obj_main)
-        self.OBJ_2.remove(obj_main)
-        
-            
-        for obj_sec in self.OBJ:
-            # print(self.OBJ.index(obj_sec))
-            alpha  = math.atan2( obj_sec.y-obj_main.y, obj_sec.x-obj_main.x )
+        # self.OBJ_2 = self.OBJ
+        index = self.OBJ.index(obj_main)
+        # self.OBJ.remove(obj_main)
+        L = self.OBJ[0:index]+self.OBJ[index+1:]
+        acc_fx,acc_fy = 0,0
+        for obj_sec in L:
             r =  self.getDistance(obj_main,obj_sec)
+            if abs(r) >= 400 :
+                continue
+            alpha  = math.atan2( obj_sec.y-obj_main.y, obj_sec.x-obj_main.x )
             
             acc = self.G*obj_sec.mass/r**2
+            if abs(acc) > 0.5:
+                acc = acc/acc*0.5
+            acc_x = acc*np.cos(alpha)
+            acc_y = acc*np.sin(alpha)
+            acc_fx += acc_x#/len(self.OBJ)
+            acc_fy +=acc_y#/len(self.OBJ)
+        # print(acc_fx,acc_fy)
+        obj_main.vx += acc_fx*self.h
+        obj_main.vy += acc_fy*self.h
             
-            obj_main.vx += np.cos(alpha)*acc 
-            obj_main.vy += np.sin(alpha)*acc
-            
-            obj_main.y +=  obj_main.vy
-            obj_main.x += obj_main.vx
-
-            # if self.cond:
-            #     if len(obj_main.POS) >=800:
-            #         obj_main.POS = obj_main.POS[2:]
-            #     obj_main.POS.append(obj_main.x)
-            #     obj_main.POS.append(obj_main.y)
-            # self.cond = not(self.cond)
-
-        self.OBJ_2.insert(index,obj_main)
-        # print((time.time()-start_time)*1000)
+        obj_main.y += obj_main.vy*self.h
+        obj_main.x += obj_main.vx*self.h
+        
+        if self.DEMO == 'solar':
+            if len(obj_main.POS) >=800:
+                obj_main.POS = obj_main.POS[2:]
+            obj_main.POS.append(obj_main.x)
+            obj_main.POS.append(obj_main.y)
 
     def outOfScreen(self,obj):
-        # print(obj.x,obj.y)
-        return obj.x < 25-obj.r/2 or obj.x > self.width-50 +obj.r/2 or obj.y < 25-obj.r/2 or obj.y > self.high -50+obj.r/2
+        return obj.x < 25-obj.r*0.5 or obj.x > self.width-50 +obj.r*0.5 or obj.y < 25-obj.r*0.5 or obj.y > self.high -50+obj.r*0.5
         
     def Draw(self):
-        start_time = time.time()
-        self.scene.clear()
-        self.scene.addRect(25,25,self.width-50,self.high -50,brush = QtGui.QBrush(QtGui.QColor(200,200,200)))
         
-        for obj in self.OBJ:
-            # print(obj.x,obj.y)
-            # self.scene.addRect(0,0,1200,800,brush = QtGui.QBrush(QtGui.QColor(255,255,255)))
-            # print(obj.x,obj.y)
-            
-            # self.scene.addRect(0,0,15,15,brush = QtGui.QBrush(QtGui.QColor(255,255,255)))
-            # self.scene.addRect(0,800,-15,-15,brush = QtGui.QBrush(QtGui.QColor(255,255,0)))
-            # self.scene.addRect(1200,0,15,15,brush = QtGui.QBrush(QtGui.QColor(255,255,0)))
-            
-            if not self.outOfScreen(obj):
-                self.getPos(obj)
-                self.scene.addEllipse(obj.x-obj.r,obj.y-obj.r,obj.r*2,obj.r*2, brush = QtGui.QBrush(QtGui.QColor(0,obj.r*8,obj.r*8)))
-                # for coord in range(0,len(obj.POS),2): 
-                #     self.scene.addLine(obj.POS[coord],obj.POS[coord+1],obj.POS[coord],
-                #                         obj.POS[coord+1],QtGui.QPen(QtGui.QColor(0,obj.r*8,obj.r*8),2))
-            # else:
-                # print("out of screen")
+        self.scene.clear()
 
-        temps_simu = (time.time()-start_time)*1000
-        print(temps_simu)
-        if temps_simu >= self.dt:
-            self.FPS.setText(str(int(1000/temps_simu))+ 'FPS')
-            print(temps_simu)
+        self.scene.addRect(25,25,self.width-50,self.high -50,brush = QtGui.QBrush(QtGui.QColor(200,200,200)))#rectangle de simulation
+        for obj in self.OBJ:
+            if not self.outOfScreen(obj):
+                self.save_time = time.perf_counter()
+                self.getPos(obj)
+                print(round(obj.x,3),round(obj.y,3))
+                V = np.sqrt(obj.vx*obj.vx +obj.vy*obj.vy)
+                if self.color:
+                    if V <= 4.6:
+                        self.scene.addEllipse(obj.x-obj.r,obj.y-obj.r,obj.r*2,obj.r*2, 
+                                              brush = QtGui.QBrush(QtGui.QColor((255*2/9)*V,255,0)))
+                    else:
+                        self.scene.addEllipse(obj.x-obj.r,obj.y-obj.r,obj.r*2,obj.r*2, 
+                                              brush = QtGui.QBrush(QtGui.QColor(255,255-(255*2/9)*(V-9/2),0)))
+                else:
+                    self.scene.addEllipse(obj.x-obj.r,obj.y-obj.r,obj.r*2,obj.r*2, 
+                                              brush = QtGui.QBrush(QtGui.QColor(0,0,0)))
+                    
+                self.temps_save = time.perf_counter()
+                for coord in range(0,len(obj.POS),2):
+                    self.scene.addLine(obj.POS[coord],obj.POS[coord+1],obj.POS[coord],
+                                        obj.POS[coord+1],QtGui.QPen(QtGui.QColor(0,obj.r*8,obj.r*8),2))
+        
+    
+    def Simulation(self):
+        start_time = time.perf_counter()
+        for Iteration in range(self.n):
+            
+            start_iter = time.perf_counter()
+            self.Draw()
+            
+            self.exportAsPng('galaxy_png_'+str(Iteration)+'.png') 
+            temps_iter = time.perf_counter()
+            print(f'Image:{Iteration}({round(Iteration*100/self.n,1)} %)','  Temps:',
+                  round((temps_iter-start_iter)*1000,2),'ms',
+                  round((self.temps_save-self.save_time)*1000,2),'ms',
+                  round((self.temps_png-self.start_png)*1000,2),'ms')
+            
+            if Iteration == self.n-1:
+                temps = round(time.perf_counter()-start_time,2)
+                print(f"Finished in {temps} s")
+            
+    def exportAsPng(self, fileName):
+        self.start_png = time.perf_counter()
+        pixmap = QtGui.QPixmap(self.scene.sceneRect().size().toSize())
+         
+        painter = QtGui.QPainter()
+        painter.begin(pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        self.graphicsView.render(painter)
+        painter.end()
+         
+        pixmap.save(fileName, "PNG")
+        self.temps_png = time.perf_counter()
             
 if __name__ == "__main__" :
     """ Show and Close the window"""
