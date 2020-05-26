@@ -4,7 +4,7 @@ Created on Tue May 19 01:03:47 2020
 
 @author: Jeremy La Porte
 
-Release 1.0
+Release 2.0
 Plot object with gravitational force
 """
 
