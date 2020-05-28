@@ -1,2 +1,2 @@
 # Orbit N-body
-Plot object with gravitational force
+Plot N objects with gravitational force
