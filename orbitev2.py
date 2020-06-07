@@ -4,11 +4,10 @@ Created on Tue May 19 01:03:47 2020
 
 @author: Jeremy La Porte
 
-Release 2.0
+Release 3.0
 Plot object with gravitational force
 """
 
-import keyboard
 from PyQt5 import QtCore, QtGui, QtWidgets
 import PyQt5.QtCore 
 from PyQt5.QtCore import Qt
@@ -20,7 +19,6 @@ import time
 import numpy as np
 import math
 import random
-from numba import jit, cuda
 
     
 class Ui_MainWindow(QtWidgets.QMainWindow):
@@ -54,100 +52,112 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.FPS = QtWidgets.QLabel(self.centralwidget)
         self.FPS.setGeometry(QtCore.QRect(20,20, 161, 50))
         self.FPS.setFont(font)
-        self.DEMO = 'solar'
-
+        self.DEMO = '10_stars'
+        
         if self.DEMO == 'solar':
-            self.OBJ = [obj(10999*10**10, 25, 0,0,1000,450),obj(10*10**10,8,3.5,0,1000,775)]
+            self.OBJ = [obj(10999*10**10, 25, 0,0,1000,450),obj(10*10**10,8,3.5,0,1000,775),
+                    obj(0.011*10**10, 3,3,0.1,1000,790)]
         if self.DEMO == 'real':
             self.OBJ = [obj(2/3*10**30, 25, 0,0,1000,450),obj(2*10**24,8,3.5,0,1000,775),
                     obj(7/3*10**22/2, 3,3,0.1,1000,790)]
         if self.DEMO == '10_stars':
             self.OBJ = []
-            nb_etoies = 80
-            for i in range(350,1500,nb_etoies):
-                for j in range(50,850,nb_etoies):
-                    score = (i-800)**2 + (j-450)**2
-                    if score <= 100000:
-                        alpha  = math.atan2(i-800,j-450)
-                        vx = np.sin(alpha- np.pi*0.5)*np.sqrt(score)/100
-                        vy = np.cos(alpha- np.pi*0.5)*np.sqrt(score)/100
-                        self.OBJ.append(obj(np.random.uniform(4*11**12,6*11**13),2,vx,vy,i,j))
+            nb_etoies = 1000
+            OBJappend = self.OBJ.append
+            for i in range(nb_etoies):
+                i,j = np.random.uniform(450,1250),np.random.uniform(75,850)
+                score = (i-900)**2 + (j-450)**2
+                if score <= 100000 and score >= 1000:
+                    alpha  = math.atan2(i-900,j-450)
+                    vx = np.sin(alpha- np.pi*0.5)*np.sqrt(score)/25
+                    vy = np.cos(alpha- np.pi*0.5)*np.sqrt(score)/25
+                    mass = np.random.uniform(1*10**37,10*50**37)/(2*score)
+                    OBJappend(obj(mass,3,vx,vy,i,j))#np.random.uniform(2*11**17/(score+1),7*11**18/(score+1)
             print(len(self.OBJ))
             
-        self.G = 6.674*10**-11
-        self.T,self.n = 200,5
+        self.T,self.n = 200,200
+        a_l = 9.461*10**15
+        self.scale = 0.01*a_l/900
         self.color = False
         self.h = self.T/self.n
         self.show()
         self.Simulation()
        
    
-
     def getDistance(self,obj_main,obj_sec):
-            return np.sqrt((obj_sec.x-obj_main.x)**2+(obj_sec.y-obj_main.y)**2)
+            return np.sqrt((obj_sec.x-obj_main.x)**2+(obj_sec.y-obj_main.y)**2)*self.scale
     # @jit(target ="cuda")
     def getPos(self,obj_main):
-        # start_time = time.time()
-        # self.OBJ_2 = self.OBJ
-        index = self.OBJ.index(obj_main)
-        # self.OBJ.remove(obj_main)
-        L = self.OBJ[0:index]+self.OBJ[index+1:]
+        atan = math.atan2
+        cos = np.cos
+        sin = np.sin
+        vx,vy = obj_main.vx,obj_main.vy 
+        x,y = obj_main.x,obj_main.y 
         acc_fx,acc_fy = 0,0
-        for obj_sec in L:
+        for obj_sec in self.OBJ:
             r =  self.getDistance(obj_main,obj_sec)
-            if abs(r) >= 400 :
+            if obj_main == obj_sec:
                 continue
-            alpha  = math.atan2( obj_sec.y-obj_main.y, obj_sec.x-obj_main.x )
+            alpha  = atan( obj_sec.y-obj_main.y, obj_sec.x-obj_main.x )
             
-            acc = self.G*obj_sec.mass/r**2
+            acc = 6.674*10**-11*obj_sec.mass/(r*r)
             if abs(acc) > 0.5:
                 acc = acc/acc*0.5
-            acc_x = acc*np.cos(alpha)
-            acc_y = acc*np.sin(alpha)
+                
+            acc_x = acc*cos(alpha)
+            acc_y = acc*sin(alpha)
             acc_fx += acc_x#/len(self.OBJ)
-            acc_fy +=acc_y#/len(self.OBJ)
+            acc_fy += acc_y#/len(self.OBJ)
         # print(acc_fx,acc_fy)
-        obj_main.vx += acc_fx*self.h
-        obj_main.vy += acc_fy*self.h
+        vx += acc_fx*self.h
+        vy += acc_fy*self.h
             
-        obj_main.y += obj_main.vy*self.h
-        obj_main.x += obj_main.vx*self.h
+        y += vy*self.h
+        x += vx*self.h
         
-        if self.DEMO == 'solar':
-            if len(obj_main.POS) >=800:
-                obj_main.POS = obj_main.POS[2:]
-            obj_main.POS.append(obj_main.x)
-            obj_main.POS.append(obj_main.y)
+        # if self.DEMO == 'solar':
+        #     if len(obj_main.POS) >=800:
+        #         obj_main.POS = obj_main.POS[2:]
+        #     obj_main.POS.append(obj_main.x)
+        #     obj_main.POS.append(obj_main.y)
 
     def outOfScreen(self,obj):
         return obj.x < 25-obj.r*0.5 or obj.x > self.width-50 +obj.r*0.5 or obj.y < 25-obj.r*0.5 or obj.y > self.high -50+obj.r*0.5
         
     def Draw(self):
-        
+        self.SDraw_Time = time.perf_counter()
         self.scene.clear()
-
-        self.scene.addRect(25,25,self.width-50,self.high -50,brush = QtGui.QBrush(QtGui.QColor(200,200,200)))#rectangle de simulation
+        Max = 5
+        self.scene.addRect(25,25,self.width-50,self.high -50,brush = QtGui.QBrush(QtGui.QColor(0,0,0)))#rectangle de simulation
+        addPoint = self.scene.addEllipse
         for obj in self.OBJ:
             if not self.outOfScreen(obj):
-                self.save_time = time.perf_counter()
+                self.SPose_Time = time.perf_counter()
                 self.getPos(obj)
-                print(round(obj.x,3),round(obj.y,3))
+                self.Pose_Time = time.perf_counter()
                 V = np.sqrt(obj.vx*obj.vx +obj.vy*obj.vy)
+                if V > Max:
+                    Max = V
                 if self.color:
-                    if V <= 4.6:
-                        self.scene.addEllipse(obj.x-obj.r,obj.y-obj.r,obj.r*2,obj.r*2, 
-                                              brush = QtGui.QBrush(QtGui.QColor((255*2/9)*V,255,0)))
-                    else:
-                        self.scene.addEllipse(obj.x-obj.r,obj.y-obj.r,obj.r*2,obj.r*2, 
-                                              brush = QtGui.QBrush(QtGui.QColor(255,255-(255*2/9)*(V-9/2),0)))
-                else:
-                    self.scene.addEllipse(obj.x-obj.r,obj.y-obj.r,obj.r*2,obj.r*2, 
-                                              brush = QtGui.QBrush(QtGui.QColor(0,0,0)))
                     
-                self.temps_save = time.perf_counter()
+                    if V <= Max/2:
+                        Color = QtGui.QColor(0,(255*2/Max)*V,255)#(255*2/Max)*V,255,0
+                        Color_p = ((255*2/Max)*V,255,0)
+                        
+                    else:
+                        Color = QtGui.QColor((255*2/Max)*(V-Max/2),255,255)#QtGui.QColor(255,255-(255*2/Max)*(V-Max/2),0)
+                        Color_p = (255,255-(255*2/Max)*(V-Max/2),0)
+                    
+                    addPoint(obj.x-obj.r,obj.y-obj.r,obj.r*2,obj.r*2,brush = QtGui.QBrush(Color))
+                else:
+                    addPoint(obj.x-obj.r,obj.y-obj.r,obj.r*2,obj.r*2, 
+                                              brush = QtGui.QBrush(QtGui.QColor(V*255/Max,255,255)))
+                
+
                 for coord in range(0,len(obj.POS),2):
                     self.scene.addLine(obj.POS[coord],obj.POS[coord+1],obj.POS[coord],
                                         obj.POS[coord+1],QtGui.QPen(QtGui.QColor(0,obj.r*8,obj.r*8),2))
+        self.Draw_Time = time.perf_counter()
         
     
     def Simulation(self):
@@ -161,8 +171,9 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             temps_iter = time.perf_counter()
             print(f'Image:{Iteration}({round(Iteration*100/self.n,1)} %)','  Temps:',
                   round((temps_iter-start_iter)*1000,2),'ms',
-                  round((self.temps_save-self.save_time)*1000,2),'ms',
-                  round((self.temps_png-self.start_png)*1000,2),'ms')
+                  'D',round((self.Draw_Time-self.SDraw_Time)*1000,2),'ms',
+                  'P',round((self.Pose_Time-self.SPose_Time)*1000,2),'ms',
+                  'Png',round((self.temps_png-self.start_png)*1000,2),'ms')
             
             if Iteration == self.n-1:
                 temps = round(time.perf_counter()-start_time,2)
